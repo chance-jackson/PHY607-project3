@@ -36,23 +36,39 @@ plt.title("Data scatter")
 plt.savefig(os.path.join(outdir, "data_scatter.png"))
 # plt.show()
 
-def fitting_func(t,m_chirp,t_coal):
-    return 134 * (1/(t_coal-t)) ** (3/8) * (1.21/m_chirp) ** (5/8)
+def fitting_func(t, m_chirp, t_coal):
+    dt = t_coal - t
+    return 134 * (1 / dt) ** (3/8) * (1.21/m_chirp) ** (5/8)
 
 def cost_func(fit, data, guess_params):
-    resid = fit(data[0], *guess_params) - data[1] #find resid
+    resid = fit(data[0], * guess_params) - data[1] #find resid
     square_resid = np.power(resid,2) #square em
 
     return  np.sum(square_resid) #return their sum
 
-minima, x_hist, y_hist, n_iter = optimize.newtons(lambda guess_params: cost_func(fitting_func, (GW190412_time, GW190412_freq), guess_params), np.array([0.4, 5]), rate = 1)
-print(minima)
-print(x_hist)
-print(n_iter)
-print(fitting_func(GW190412_time, *minima))
-plt.scatter(GW190412_time, GW190412_freq)
-plt.plot(GW190412_time, fitting_func(GW190412_time, *minima))
-plt.show()
+# use optimizer to find intial best-fit
+initial_guess = np.array([10.0, max(GW190412_time) + 0.05])
+print("Running optimizer from initial guess", initial_guess)
+
+f_wrapper = lambda x: cost_func(fitting_func, (GW190412_time, GW190412_freq), x)
+minima, x_hist, y_hist, n_iter = optimize.newtons(f_wrapper, initial_guess, rate=1.0, delta_x=1e-3, tol=1e-6)
+
+print("Minima Result: ", minima)
+print("Iterations: ", n_iter)
+
+minima = np.asarray(minima).reshape(-1)
+fitted_freq = fitting_func(GW190412_time, *minima)
+resid = GW190412_freq - fitted_freq
+
+# estimate observational noise sigma from residuals
+sigma_est = np.std(resid)
+if sigma_est <= 0 or not np.isfinite(sigma_est):
+    sigma_est = 1.0
+print("Estimated sigma from residuals:", sigma_est)
+
+# plt.scatter(GW190412_time, GW190412_freq)
+# plt.plot(GW190412_time, fitting_func(GW190412_time, *minima))
+# plt.show()
 #def posterior(x, fit = fitting_func, data = (xpos,ypos)):
 #    #s -> signal, just our model. 
 #    log_likelihood = cost_func(fit, data, x) #gaussian distribution of noise
@@ -77,9 +93,10 @@ plt.show()
 #
 #    return x, p
 #
-def ensemble(nwalkers, initial, iterations):
-    chains = []
-    for i in range(nwalkers):
-        chain, prob = markov(initial, posterior, proposal, iterations)
-        chains.append(chain[-1])
-    return chains
+# def ensemble(nwalkers, initial, iterations):
+#     chains = []
+#     for i in range(nwalkers):
+#         chain, prob = markov(initial, posterior, proposal, iterations)
+#         chains.append(chain[-1])
+#     return chains
+
