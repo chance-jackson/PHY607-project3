@@ -15,11 +15,16 @@ GW190412_time = np.array([GW190412[i][0] for i in range(len(GW190412))])
 GW190412_freq = np.array([GW190412[i][1] for i in range(len(GW190412))])
 GW190412_power = np.array([GW190412[i][2] for i in range(len(GW190412))])
 
+GW190412_time = GW190412_time - min(GW190412_time)
+mask = GW190412_time < 0.5
+GW190412_time = GW190412_time[mask]
+GW190412_freq = GW190412_freq[mask]
+
 plt.scatter(GW190412_time,GW190412_freq)
 plt.show()
 
 def fitting_func(t,m_chirp,t_coal):
-    return 1/np.pi * (5/256 * 1/t_coal) ** (3/8) * (G * m_chirp/c**3) ** (-5/8)
+    return 1/np.pi * (5/256 * 1/(t_coal-t)) ** (3/8) * (G * m_chirp/c**3) ** (-5/8)
 
 def cost_func(fit, data, guess_params):
     resid = fit(data[0], *guess_params) - data[1] #find resid
@@ -27,7 +32,7 @@ def cost_func(fit, data, guess_params):
 
     return  np.sum(square_resid) #return their sum
 
-minima, x_hist, y_hist, n_iter = optimize.newtons(lambda guess_params: cost_func(fitting_func, (GW190412_time, GW190412_freq), guess_params), np.array([100000000, 30]), rate = 1)
+minima, x_hist, y_hist, n_iter = optimize.newtons(lambda guess_params: cost_func(fitting_func, (GW190412_time, GW190412_freq), guess_params), np.array([0.4, 5]), rate = 1)
 print(minima)
 print(x_hist)
 print(n_iter)
