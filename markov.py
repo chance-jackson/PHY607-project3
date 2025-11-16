@@ -5,10 +5,17 @@ import emcee
 import corner
 import glob
 from scipy.constants import c,G
+import os
+
+# create output directory
+outdir = "mcmc_out"
+os.makedirs(outdir, exist_ok=True)
 
 ########### Import grav wave data ############
 scalogram_files = glob.glob("data/*.txt")
-print(scalogram_files)
+print("Data files found:", scalogram_files)
+if len(scalogram_files) ==0:
+    raise FileNotFoundError("No data found.")
 GW190412 = np.loadtxt(scalogram_files[0])
 GW190814 = np.loadtxt(scalogram_files[1])
 GW190412_time = np.array([GW190412[i][0] for i in range(len(GW190412))])
@@ -20,8 +27,14 @@ mask = GW190412_time < 0.5
 GW190412_time = GW190412_time[mask]
 GW190412_freq = GW190412_freq[mask]
 
-plt.scatter(GW190412_time,GW190412_freq)
-plt.show()
+# plotting original data
+plt.figure()
+plt.scatter(GW190412_time,GW190412_freq, s=6)
+plt.xlabel("Time (s)")
+plt.ylabel("Frequency (Hz)")
+plt.title("Data scatter")
+plt.savefig(os.path.join(outdir, "data_scatter.png"))
+# plt.show()
 
 def fitting_func(t,m_chirp,t_coal):
     return 134 * (1/(t_coal-t)) ** (3/8) * (1.21/m_chirp) ** (5/8)
