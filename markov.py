@@ -24,7 +24,7 @@ plt.scatter(GW190412_time,GW190412_freq)
 plt.show()
 
 def fitting_func(t,m_chirp,t_coal):
-    return 1/np.pi * (5/256 * 1/(t_coal-t)) ** (3/8) * (G * m_chirp/c**3) ** (-5/8)
+    return 134 * (1/(t_coal-t)) ** (3/8) * (1.21/m_chirp) ** (5/8)
 
 def cost_func(fit, data, guess_params):
     resid = fit(data[0], *guess_params) - data[1] #find resid
