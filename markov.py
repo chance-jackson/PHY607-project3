@@ -195,3 +195,24 @@ def log_posterior(params):
         return -np.inf
     ll = log_likelihood(params)
     return lp + ll
+
+# cost wrapper
+def cost_for_optimize(x):
+    # convert input to array
+    x = np.asarray(x).ravel()
+    if x.size == 2:
+        m_chirp, tc = float(x[0]), float(x[1])
+        m_equal = m_chirp * (2.0 ** (1.0 / 5.0))  # Mc = m * 2^-1/5, for equal mass
+        # 5 paramter guess
+        params = [m_equal, m_equal, 400.0, tc, 0.0]
+    elif x.size == 5:
+        # optimizer already predicts 5
+        params = x
+    else:
+        raise ValueError("cost_for_optimize expects 2 or 5 params")
+
+    lp = log_posterior(params)
+    # prior rejects
+    if not np.isfinite(lp):
+        return 1e30
+    return -lp
