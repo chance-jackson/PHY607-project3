@@ -104,3 +104,94 @@ valid = data_freqs >= f_low
 data_freqs = data_freqs[valid]
 data_spec  = data_spec[valid]
 psd_interp = psd_interp[valid]
+
+def make_waveform_fd(m1, m2, dL, phi_c, delta_f, f_lower=f_low, approximant=approximant):
+    """
+    Generate model waveform with PyCBC.
+    Inputs:
+        m1, m2: solar masses
+        dL: luminosity distance
+        phi_c: coalescence phase
+        delta_f: spacing between bins
+        f_lower: minimum frequency to use
+        approximant: waveform model
+
+    Ouputs:
+        hp: array of + polarization
+        hp.sample_frequencies: frequency grif
+    """
+    try:
+        hp, hc = get_fd_waveform(approximant=approximant,
+                                 mass1=float(m1), mass2=float(m2),
+                                 delta_f=delta_f, f_lower=f_lower,
+                                 distance=float(dL), phase=float(phi_c))
+    except Exception:
+        return None, None
+    return np.array(hp), np.array(hp.sample_frequencies)
+
+def align_waveform_to_data(hp_arr, hp_freqs, data_freqs, tc=0.0):
+    """
+    Matching PyCBC frequency grif to data grid from FFT. 
+    """
+    if data_freqs[0] < hp_freqs[0]:
+        return None
+
+    hp_interp = complex_interp(data_freqs, hp_freqs, hp_arr).astype(np.complex128)
+    phasor = np.exp(-2j * np.pi * data_freqs * tc)
+    return hp_interp * phasor
+
+def log_prior(params):
+    m1, m2, dL, tc, phi = params
+
+    # mass bounds for assumed values
+    if not (20.0 < m2 < m1 < 60.0):
+        return -np.inf
+
+    # we know this is symmetrical so assume we start there
+    q = m2 / m1
+    if not (0.6 < q < 1.0):
+        return -np.inf
+
+    # distance bounds
+    if not (200.0 < dL < 800.0):  # Mpc
+        return -np.inf
+
+    # restricts merger to 8 second window
+    if not (tseg[0] - 0.1 < tc < tseg[-1] + 0.5):
+        return -np.inf
+
+    # phase
+    if not (0.0 <= phi < 2 * np.pi):
+        return -np.inf
+
+    # source uniformly distributed in volume
+    return 2.0 * np.log(dL)
+
+def log_likelihood(params):
+    m1, m2, dL, tc, phi = params
+
+    # generate model
+    hp_arr, hp_freqs = make_waveform_fd(m1, m2, dL, phi,
+                                        delta_f=df, f_lower=f_low,
+                                        approximant=approximant)
+    if hp_arr is None:
+        return -np.inf
+
+    # align data to same freq grid
+    model = align_waveform_to_data(hp_arr, hp_freqs, data_freqs, tc=tc)
+    if model is None:
+        return -np.inf
+
+    # compute residuals between real FFT and model
+    resid = data_spec - model
+    chi2 = inner_product(resid, resid, psd_interp, df)
+    # gaussian likelihood
+    return -0.5 * chi2
+
+def log_posterior(params):
+    lp = log_prior(params)
+    # if prior rejects
+    if not np.isfinite(lp):
+        return -np.inf
+    ll = log_likelihood(params)
+    return lp + ll
