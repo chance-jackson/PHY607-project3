@@ -30,9 +30,10 @@ event_rel_time = event_gps - file_start_gps
 # MCMC settings
 nwalkers = 4
 nsteps = 8000
-proposal_mode = "newton"       # "rw", "newton", or "mix"
+proposal_mode = "mix"       # "rw", "newton", or "mix"
 # proposal stds for [m1, m2, dL, tc, phi]
-rw_scales = np.array([1.5, 1.5, 50.0, 0.0008, 0.5])
+rw_scales = np.array([3.0, 3.0, 150.0, 0.002, 1.0])
+
 
 def load_strain_text(path, fs):
     """ Load 1-column strain file and build time array. """
@@ -216,3 +217,202 @@ def cost_for_optimize(x):
     if not np.isfinite(lp):
         return 1e30
     return -lp
+
+
+# Proposals
+rng = np.random.default_rng()
+
+def proposal_rw(theta, scales):
+    return theta + rng.normal(scale=scales)
+
+def proposal_newton(
+        theta, f_obj, 
+        delta_x=1e-3, 
+        alpha=0.03, 
+        cov_scale=0.005):
+    """ Newton-informed Gaussian proposal using optimize. """
+    try:
+        g = optimize.grad(f_obj, theta, delta_x).ravel()
+        H = optimize.hessian(f_obj, theta, delta_x)
+    except Exception:
+        return None, False
+
+    H = 0.5 * (H + H.T) # symmetric hessian
+    eps = 1e-6
+    try:
+        Hreg = H + eps * np.eye(H.shape[0]) # making the matrix invertible by adding eps
+        Hinv = inv(Hreg) # inverts
+    except (LinAlgError, ValueError):
+        return None, False
+
+    center = theta - alpha * (Hinv @ g) # proposal mean
+    cov = cov_scale * Hinv 
+    cov = 0.5 * (cov + cov.T) + 1e-8 * np.eye(cov.shape[0]) # covariance matrix
+    try:
+        prop = rng.multivariate_normal(mean=center, cov=cov) # random proposal
+    except Exception:
+        return None, False
+    return prop, True
+
+# MCMC sampler
+def markov_mh(initial, nsteps=2000, proposal="rw",
+              rw_scales_local=None, adapt=False, adapt_interval=1000):
+    
+    # initialize paramters in chain and posterior values
+    theta = np.array(initial, dtype=float).ravel()
+    ndim = len(theta)
+    chain = np.zeros((nsteps, ndim))
+    logpost_chain = np.full(nsteps, -np.inf)
+    accepts = 0
+
+    # random walk step sizing
+    if rw_scales_local is None:
+        rw_scales_local = rw_scales.copy()
+
+    # current position
+    cur_lp = log_posterior(theta)
+
+    # main loop
+    for i in range(nsteps):
+        # convert this to options in code ? later
+        if proposal == "rw":
+            prop = proposal_rw(theta, rw_scales_local)
+        # in general we will use the optimizer
+        elif proposal == "newton":
+            prop, used = proposal_newton(theta, cost_for_optimize,
+                                         delta_x=1e-3, alpha=0.03, cov_scale=0.005)
+            if prop is None:
+                prop = proposal_rw(theta, rw_scales_local)
+        elif proposal == "mix":
+            if rng.random() < 0.9:
+                prop = proposal_rw(theta, rw_scales_local)
+                used = False
+            else:
+                prop, used = proposal_newton(theta, cost_for_optimize,
+                                            delta_x=1e-3, alpha=0.03, cov_scale=0.005)
+                if prop is None:
+                    prop = proposal_rw(theta, rw_scales_local)
+        else:
+            raise ValueError("Unknown proposal mode")
+
+        # posterior of proposal
+        prop_lp = log_posterior(prop)
+        # acceptance condition
+        if not np.isfinite(prop_lp):
+            chain[i] = theta
+            logpost_chain[i] = cur_lp
+        else:
+            accept_prob = min(1.0, np.exp(prop_lp - cur_lp))
+            if rng.random() < accept_prob:
+                theta = prop
+                cur_lp = prop_lp
+                accepts += 1
+            chain[i] = theta
+            logpost_chain[i] = cur_lp
+
+        # adaptive tuning on RW scales
+        if adapt and (i + 1) % adapt_interval == 0:
+            recent_accept = accepts / float(i + 1)
+            target = 0.25
+            # acceptance too low
+            if recent_accept < target * 0.7:
+                rw_scales_local = rw_scales_local * 0.8
+            # acceptance too high
+            elif recent_accept > target * 1.3:
+                rw_scales_local = rw_scales_local * 1.2
+            print(f"[adapt] step {i+1}: acc~{recent_accept:.3f}, new scales {rw_scales_local}")
+
+    acc_rate = accepts / float(nsteps)
+    return chain, logpost_chain, acc_rate
+
+# running the simulation
+def run_ensemble(nwalkers=nwalkers, nsteps=nsteps,
+                 proposal_mode=proposal_mode, rw_scales_local=rw_scales,
+                 adapt=False):
+    chains = []
+    logs = []
+    accepts = []
+
+    # use optimizer to pick starting values
+    try:
+        # for GW150914, start near Mc~28 Msun
+        seed = np.array([28.0, center_time])
+        minima, _, _, nit = optimize.newtons(lambda x: cost_for_optimize(x),
+                                             seed, delta_x=1e-3, rate=0.5, tol=1e-5)
+        minima = np.asarray(minima).ravel()
+        print("Newton seed minima (Mc, tc):", minima, "it:", nit)
+        m_equal = minima[0] * (2.0 ** (1.0 / 5.0))
+        base_init = np.array([m_equal, m_equal, 400.0, minima[1], 0.0])
+    except Exception as e:
+        print("Newton seeding failed:", e)
+        # fallback guess given GW150914 params
+        base_init = np.array([35.0, 30.0, 400.0, center_time, 0.0])
+
+    for w in range(nwalkers):
+        # walker initilazation
+        jitter = np.array([
+            0.05 * base_init[0] * np.random.randn(),
+            0.05 * base_init[1] * np.random.randn(),
+            50.0 * np.random.randn(),
+            0.0005 * np.random.randn(),
+            0.5 * np.random.randn()
+        ])
+        init = base_init + jitter
+        print(f"Starting walker {w}, init = {init}")
+        # run walkers
+        ch, lp, acc = markov_mh(init, nsteps=nsteps, proposal=proposal_mode,
+                                rw_scales_local=rw_scales_local, adapt=adapt)
+        chains.append(ch)
+        logs.append(lp)
+        accepts.append(acc)
+        # np.save(os.path.join(outdir, f"chain_w{w}.npy"), ch)
+        # np.save(os.path.join(outdir, f"logpost_w{w}.npy"), lp)
+        print(f"Walker {w} done. acc={acc:.3f}")
+
+    return chains, logs, accepts
+
+# main loop, move to seperate file later, we need to add more options maybe different files
+if __name__ == "__main__":
+    chains, logs, accepts = run_ensemble(nwalkers=nwalkers, nsteps=nsteps,
+                                         proposal_mode=proposal_mode,
+                                         rw_scales_local=rw_scales,
+                                         adapt=True)
+    print("Acceptance rates:", accepts)
+
+    # removes first 30% of samples
+    burnin = int(0.3 * nsteps)
+    all_samples = np.vstack([chains[i][burnin:] for i in range(len(chains))])
+    np.save(os.path.join(outdir, "posterior_samples.npy"), all_samples)
+    print("Collected samples:", all_samples.shape)
+
+    # printing final values
+    labels = ["m1", "m2", "dL", "tc", "phi"]
+    for i, lab in enumerate(labels):
+        med = np.median(all_samples[:, i])
+        lo = np.percentile(all_samples[:, i], 5)
+        hi = np.percentile(all_samples[:, i], 95)
+        print(f"{lab}: median={med:.5g}, 90% CI = [{lo:.5g}, {hi:.5g}]")
+
+    # plot traces of mass for convergence
+    plt.figure(figsize=(10, 6))
+    plt.subplot(2, 1, 1)
+    for w in range(len(chains)):
+        plt.plot(chains[w][:, 0], alpha=0.6)
+    plt.ylabel("m1")
+    plt.subplot(2, 1, 2)
+    for w in range(len(chains)):
+        plt.plot(chains[w][:, 1], alpha=0.6)
+    plt.ylabel("m2")
+    plt.xlabel("step")
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, "traces_m1m2.png"))
+
+    # plot mass posterior
+    plt.figure(figsize=(5, 5))
+    plt.scatter(all_samples[:, 0], all_samples[:, 1], s=2, alpha=0.4)
+    plt.xlabel("m1")
+    plt.ylabel("m2")
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, "m1_m2_scatter.png"))
+
+    print("Saved outputs in", outdir)
