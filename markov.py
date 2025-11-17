@@ -1,102 +1,106 @@
+import os
 import numpy as np
 import matplotlib.pyplot as plt
-import optimize
-import emcee
-import corner
-import glob
-from scipy.constants import c,G
-import os
+from numpy.linalg import inv, LinAlgError
+import optimize          # your optimize.py
+from scipy.signal import welch
+from pycbc.waveform import get_fd_waveform
+from pycbc.psd import inverse_spectrum_truncation
+from pycbc.types import FrequencySeries
+from math import pi
 
-# create output directory
+# output dir
 outdir = "mcmc_out"
 os.makedirs(outdir, exist_ok=True)
 
-########### Import grav wave data ############
-scalogram_files = glob.glob("data/*.txt")
-print("Data files found:", scalogram_files)
-if len(scalogram_files) ==0:
-    raise FileNotFoundError("No data found.")
-GW190412 = np.loadtxt(scalogram_files[0])
-GW190814 = np.loadtxt(scalogram_files[1])
-GW190412_time = np.array([GW190412[i][0] for i in range(len(GW190412))])
-GW190412_freq = np.array([GW190412[i][1] for i in range(len(GW190412))])
-GW190412_power = np.array([GW190412[i][2] for i in range(len(GW190412))])
+# modeling GW150914
+## import livingston data
+strain_path = "L-L1_GWOSC_16KHZ_R1-1126259447-32.txt"
 
-GW190412_time = GW190412_time - min(GW190412_time)
-mask = GW190412_time < 0.5
-GW190412_time = GW190412_time[mask]
-GW190412_freq = GW190412_freq[mask]
+fs = 16384.0 # sampling rate (Hz) of the strain file
+f_low = 20.0 # low-frequency cutoff for analysis (Hz)
+delta_t_window = 8.0 # seconds of data window around event to analyze
+approximant = "IMRPhenomD" # picking inspiral–merger–ringdown model
 
-# plotting original data
-plt.figure()
-plt.scatter(GW190412_time,GW190412_freq, s=6)
-plt.xlabel("Time (s)")
-plt.ylabel("Frequency (Hz)")
-plt.title("Data scatter")
-plt.savefig(os.path.join(outdir, "data_scatter.png"))
-# plt.show()
+# GW150914 event time (for picking window only; tc is still a free parameter)
+file_start_gps = 1126259446.0      # start GPS of your file, strain file doesnt come with relative time
+event_gps      = 1126259462.4      # approximate merger time
+event_rel_time = event_gps - file_start_gps 
 
-def fitting_func(t, m_chirp, t_coal):
-    dt = t_coal - t
-    return 134 * (1 / dt) ** (3/8) * (1.21/m_chirp) ** (5/8)
+# MCMC settings
+nwalkers = 4
+nsteps = 8000
+proposal_mode = "newton"       # "rw", "newton", or "mix"
+# proposal stds for [m1, m2, dL, tc, phi]
+rw_scales = np.array([1.5, 1.5, 50.0, 0.0008, 0.5])
 
-def cost_func(fit, data, guess_params):
-    resid = fit(data[0], * guess_params) - data[1] #find resid
-    square_resid = np.power(resid,2) #square em
+def load_strain_text(path, fs):
+    """ Load 1-column strain file and build time array. """
+    strain = np.loadtxt(path)
+    times = np.arange(len(strain)) / fs
+    return times, strain
 
-    return  np.sum(square_resid) #return their sum
+def freqs_and_spec_from_timeseries(strain_ts, fs, nfft=None):
+    """ Converts time-domain strain data into frequency domain data. """
+    if nfft is None:
+        nfft = int(2**np.ceil(np.log2(len(strain_ts)))) # length of FFT
+    spec = np.fft.rfft(strain_ts, n=nfft) # compute real FFT
+    freqs = np.fft.rfftfreq(nfft, d=1.0/fs) # build frequency array
+    return freqs, spec
 
-# use optimizer to find intial best-fit
-initial_guess = np.array([10.0, max(GW190412_time) + 0.05])
-print("Running optimizer from initial guess", initial_guess)
+def inner_product(a, b, psd_interp, df):
+    """ Inner product used in LIGO likelihood function, noise weighted. """
+    return 4.0 * df * np.real(np.sum(a * np.conjugate(b) / psd_interp))
 
-f_wrapper = lambda x: cost_func(fitting_func, (GW190412_time, GW190412_freq), x)
-minima, x_hist, y_hist, n_iter = optimize.newtons(f_wrapper, initial_guess, rate=1.0, delta_x=1e-3, tol=1e-6)
+def complex_interp(x, xp, yp):
+    """ Interpolate complex waveform onto frequency array. """
+    return (np.interp(x, xp, yp.real) +
+            1j * np.interp(x, xp, yp.imag))
 
-print("Minima Result: ", minima)
-print("Iterations: ", n_iter)
+# Load data
+if not os.path.exists(strain_path):
+    raise FileNotFoundError(f"No file found: {strain_path}")
 
-minima = np.asarray(minima).reshape(-1)
-fitted_freq = fitting_func(GW190412_time, *minima)
-resid = GW190412_freq - fitted_freq
+times, strain = load_strain_text(strain_path, fs)
 
-# estimate observational noise sigma from residuals
-sigma_est = np.std(resid)
-if sigma_est <= 0 or not np.isfinite(sigma_est):
-    sigma_est = 1.0
-print("Estimated sigma from residuals:", sigma_est)
+# subtract DC to avoid huge low-f noise
+strain = strain - np.mean(strain)
 
-# plt.scatter(GW190412_time, GW190412_freq)
-# plt.plot(GW190412_time, fitting_func(GW190412_time, *minima))
-# plt.show()
-#def posterior(x, fit = fitting_func, data = (xpos,ypos)):
-#    #s -> signal, just our model. 
-#    log_likelihood = cost_func(fit, data, x) #gaussian distribution of noise
-#    prior = 1 #uniform priors
-#    return -1/2 * log_likelihood
+# pick an 8 s window around the known event time, since files are large
+center_time = event_rel_time
+start_time = center_time - delta_t_window / 2
+end_time   = center_time + delta_t_window / 2
 
-#def proposal(x):
-#    return np.random.uniform(-10,10) + x
+mask = (times >= start_time) & (times < end_time)
+tseg = times[mask]
+hseg = strain[mask]
 
-#def markov(initial, post, prop, iterations):
-#    x = [initial]
-#    p = [post(x[-1])]
-#    for i in range(iterations):
-#        x_test = [prop(x[-1][i]) for i in range(7)]
-#        p_test = post(x_test)
-#        
-#        acc = p_test/p[-1]
-#        u = np.random.uniform(0,1)
-#        if u <= acc:
-#            x.append(np.array(x_test).ravel())
-#            p.append(p_test)
-#
-#    return x, p
-#
-# def ensemble(nwalkers, initial, iterations):
-#     chains = []
-#     for i in range(nwalkers):
-#         chain, prob = markov(initial, posterior, proposal, iterations)
-#         chains.append(chain[-1])
-#     return chains
+# FFT of the data segment
+nfft = int(2**np.ceil(np.log2(len(hseg))))
+data_freqs, data_spec = freqs_and_spec_from_timeseries(hseg, fs, nfft=nfft)
+df = data_freqs[1] - data_freqs[0]
 
+# noise PSD estimation, to understand what frequencies are noisey/sensitive
+off_mask = ~mask 
+
+# this uses welch's method to compute PSD of only noise section
+f_w, psd_w = welch(strain[off_mask], fs=fs, nperseg=int(2 * fs))
+
+psd_w[psd_w <= 0] = 1e-50  # avoid zeros / negatives
+
+# interpolate PSD to data frequency grid
+psd_interp = np.interp(data_freqs, f_w, psd_w)
+
+# wrap in FrequencySeries(PyCBC func) and apply inverse spectrum truncation(smoothing PSD to avoid fitting to noise)
+psd_fs = FrequencySeries(psd_interp, delta_f=df)
+trunc_len = min(len(psd_fs), int(4 * fs / df))
+psd_fs = inverse_spectrum_truncation(psd_fs, trunc_len, low_frequency_cutoff=f_low)
+
+# back from PyCBC object to numpy array
+psd_interp = np.array(psd_fs)
+
+# restrict to f >= f_low
+valid = data_freqs >= f_low
+data_freqs = data_freqs[valid]
+data_spec  = data_spec[valid]
+psd_interp = psd_interp[valid]
