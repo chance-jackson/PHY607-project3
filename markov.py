@@ -371,6 +371,7 @@ def run_ensemble(nwalkers=nwalkers, nsteps=nsteps,
 
     return chains, logs, accepts
 
+
 # main loop, move to seperate file later, we need to add more options maybe different files
 if __name__ == "__main__":
     chains, logs, accepts = run_ensemble(nwalkers=nwalkers, nsteps=nsteps,
