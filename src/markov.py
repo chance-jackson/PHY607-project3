@@ -3,11 +3,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 from numpy.linalg import inv, LinAlgError
 import optimize          # your optimize.py, we end up needing to use multiple optimizers due to inaccuracies but we can discuss in report
-from scipy.signal import welch
-from pycbc.waveform import get_fd_waveform
+from scipy.signal import welch, butter, filtfilt
+from pycbc.waveform import get_fd_waveform, get_td_waveform
 from pycbc.psd import inverse_spectrum_truncation
 from pycbc.types import FrequencySeries
 from math import pi
+from scipy.interpolate import interp1d
+import glob
 
 # output dir
 outdir = "mcmc_out"
@@ -15,7 +17,7 @@ os.makedirs(outdir, exist_ok=True)
 
 # modeling GW150914
 ## import livingston data
-strain_path = "L-L1_GWOSC_16KHZ_R1-1126259447-32.txt"
+strain_path = glob.glob(L*.txt) #"L-L1_GWOSC_16KHZ_R1-1126259447-32.txt"
 
 fs = 16384.0 # sampling rate (Hz) of the strain file
 f_low = 20.0 # low-frequency cutoff for analysis (Hz)
@@ -63,6 +65,7 @@ if not os.path.exists(strain_path):
     raise FileNotFoundError(f"No file found: {strain_path}")
 
 times, strain = load_strain_text(strain_path, fs)
+dt = times[1] - times[0]
 
 # subtract DC to avoid huge low-f noise
 strain = strain - np.mean(strain)
@@ -83,7 +86,7 @@ df = data_freqs[1] - data_freqs[0]
 
 # noise PSD estimation, to understand what frequencies are noisey/sensitive
 off_mask = ~mask 
-
+ 
 # this uses welch's method to compute PSD of only noise section
 f_w, psd_w = welch(strain[off_mask], fs=fs, nperseg=int(2 * fs))
 
@@ -91,6 +94,7 @@ psd_w[psd_w <= 0] = 1e-50  # avoid zeros / negatives
 
 # interpolate PSD to data frequency grid
 psd_interp = np.interp(data_freqs, f_w, psd_w)
+psd_interp_whitening = interp1d(f_w, psd_w)
 
 # wrap in FrequencySeries(PyCBC func) and apply inverse spectrum truncation(smoothing PSD to avoid fitting to noise)
 psd_fs = FrequencySeries(psd_interp, delta_f=df)
@@ -106,6 +110,46 @@ data_freqs = data_freqs[valid]
 data_spec  = data_spec[valid]
 psd_interp = psd_interp[valid]
 
+#Whitening in time domain (just for plotting, we fit in frequency domain)
+def whiten_bp(strain, psd_interp, dt = dt):
+    n = len(strain)
+    freqs = np.fft.rfftfreq(n, dt)
+    
+    spec = np.fft.rfft(strain)
+
+    white_dataspec = spec/ (np.sqrt(psd_interp(freqs) / dt/ 2))
+    white_datastrain = np.fft.irfft(white_dataspec, n = len(strain))
+    b, a = butter(4, [20*2/fs, 300*2/fs], btype = "band") 
+    whitenbp_strain = filtfilt(b, a, white_datastrain)
+    return whitenbp_strain
+
+whitenbp_datastrain = whiten_bp(strain, psd_interp_whitening)
+
+def make_waveform_td(m1, m2, dL, phi_c, f_lower= f_low, approximant = approximant):
+    """
+    Generate time domain waveform model w/ PyCBC
+    Inputs:
+        m1, m2: solar masses
+        dL: luminosity distance
+        phi_c: coalescence phase
+        delta_t: spacing between samples
+        f_lower: minimum frequency
+        approximant: waveform model
+
+    Outputs:
+        hp: array of plus polarization strain
+        hp.sample_times: array of associated sample times
+    """
+    try:
+        hp, hc = get_td_waveform(approximant = approximant,
+                                 mass1 = float(m1), mass2 = float(m2),
+                                 delta_t = 1/fs, f_lower = f_low,
+                                 phase = float(phi_c), distance = float(dL))
+    except Exception:
+        return None, None
+    return np.array(hp), np.array(hp.sample_times)
+
+
 def make_waveform_fd(m1, m2, dL, phi_c, delta_f, f_lower=f_low, approximant=approximant):
     """
     Generate model waveform with PyCBC.
@@ -119,7 +163,7 @@ def make_waveform_fd(m1, m2, dL, phi_c, delta_f, f_lower=f_low, approximant=appr
 
     Ouputs:
         hp: array of + polarization
-        hp.sample_frequencies: frequency grif
+        hp.sample_frequencies: frequency grid
     """
     try:
         hp, hc = get_fd_waveform(approximant=approximant,
@@ -370,50 +414,3 @@ def run_ensemble(nwalkers=nwalkers, nsteps=nsteps,
         print(f"Walker {w} done. acc={acc:.3f}")
 
     return chains, logs, accepts
-
-
-# main loop, move to seperate file later, we need to add more options maybe different files
-if __name__ == "__main__":
-    chains, logs, accepts = run_ensemble(nwalkers=nwalkers, nsteps=nsteps,
-                                         proposal_mode=proposal_mode,
-                                         rw_scales_local=rw_scales,
-                                         adapt=True)
-    print("Acceptance rates:", accepts)
-
-    # removes first 30% of samples
-    burnin = int(0.3 * nsteps)
-    all_samples = np.vstack([chains[i][burnin:] for i in range(len(chains))])
-    np.save(os.path.join(outdir, "posterior_samples.npy"), all_samples)
-    print("Collected samples:", all_samples.shape)
-
-    # printing final values
-    labels = ["m1", "m2", "dL", "tc", "phi"]
-    for i, lab in enumerate(labels):
-        med = np.median(all_samples[:, i])
-        lo = np.percentile(all_samples[:, i], 5)
-        hi = np.percentile(all_samples[:, i], 95)
-        print(f"{lab}: median={med:.5g}, 90% CI = [{lo:.5g}, {hi:.5g}]")
-
-    # plot traces of mass for convergence
-    plt.figure(figsize=(10, 6))
-    plt.subplot(2, 1, 1)
-    for w in range(len(chains)):
-        plt.plot(chains[w][:, 0], alpha=0.6)
-    plt.ylabel("m1")
-    plt.subplot(2, 1, 2)
-    for w in range(len(chains)):
-        plt.plot(chains[w][:, 1], alpha=0.6)
-    plt.ylabel("m2")
-    plt.xlabel("step")
-    plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "traces_m1m2.png"))
-
-    # plot mass posterior
-    plt.figure(figsize=(5, 5))
-    plt.scatter(all_samples[:, 0], all_samples[:, 1], s=2, alpha=0.4)
-    plt.xlabel("m1")
-    plt.ylabel("m2")
-    plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "m1_m2_scatter.png"))
-
-    print("Saved outputs in", outdir)

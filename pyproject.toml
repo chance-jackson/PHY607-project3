@@ -1,0 +1,27 @@
+[project]
+name = "BayesGrav"
+version = "0.0.1"
+dependencies = [
+	"numpy",
+	"matplotlib",
+	"scipy",
+	"pycbc",
+	"emcee",
+	"corner"
+]
+authors = [
+	{ name = "Nico O'Neill", email = "neoneill@syr.edu"},
+	{ name = "Chance Jackson", email = "cjacks34@syr.edu"}
+]
+
+description = "A package containing methods to replicate the parameter estimation of GW150914 via Bayesian inference. "
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+	"Programming Language :: Python :: 3",
+	"License :: OSI Approved :: MIT License",
+	"Operating System :: OS Independent"
+]
+
+[project.scripts]
+main-script = "main:main"

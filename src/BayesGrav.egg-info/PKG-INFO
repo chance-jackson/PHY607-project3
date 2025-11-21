@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: BayesGrav
+Version: 0.0.1
+Summary: A package containing methods to replicate the parameter estimation of GW150914 via Bayesian inference. 
+Author-email: Nico O'Neill <neoneill@syr.edu>, Chance Jackson <cjacks34@syr.edu>
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: matplotlib
+Requires-Dist: scipy
+Requires-Dist: pycbc
+Requires-Dist: emcee
+Requires-Dist: corner
