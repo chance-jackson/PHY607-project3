@@ -1,7 +1,7 @@
 import argparse
 import optimize # your optimizer
 import markov # my mcmc
-from markov import proposal_mode, rw_scales, strain_path, fs, center_time
+from markov import rw_scales, strain_path, fs, center_time
 import numpy as np
 import os
 import matplotlib.pyplot as plt
@@ -80,6 +80,7 @@ def main():
 
     nwalkers = args.nwalkers
     nsteps = args.nsteps
+    proposal_mode = args.proposal_mode
 
     # main loop from markov.py
     chains, logs, accepts = markov.run_ensemble(nwalkers=nwalkers, nsteps=nsteps,
@@ -101,6 +102,35 @@ def main():
         lo = np.percentile(all_samples[:, i], 5)
         hi = np.percentile(all_samples[:, i], 95)
         print(f"{lab}: median={med:.5g}, 90% CI = [{lo:.5g}, {hi:.5g}]")
+    
+
+    chains_burnin = [chains[i][burnin:] for i in range(len(chains))]
+    
+    def gelman_rubin(chains, Ndims = 5):
+        """
+        This computes the Gelman-Rubin statistic for an ensemble of Markov chains by comparing the variance within a chain to the variance between chains. Note: this is done after burn-in values have been discarded.
+        """
+        chains_burnin = [chains[i][burnin:] for i in range(len(chains))] #chains (discarding burn-in)
+        L = chains_burnin[0].shape[0] #length of each chain
+        gelman_stats = np.zeros(Ndims) #array to store gelman stats
+
+        chain_means, chain_var = [],[]
+        for i in range(Ndims):
+            for j in range(len(chains)):
+                chain_means.append(np.mean(chains[j][:,i])) #take within chain mean of chain j, ith parameter
+                chain_var.append(np.var(chains[j][:,i])) #within chain variance
+            mean_chain_mean = np.mean(chain_means) #mean of chain means
+            B = np.var(chain_means) #variance of chain means
+            W = np.mean(chain_var) #mean of individual chain variances
+            
+            gelman_stat = (((L-1)/L * W + B/L))/W
+            gelman_stats[i] += gelman_stat
+
+        return gelman_stats
+
+    gelman = gelman_rubin(chains)
+    for i,c in enumerate(gelman):
+        print(f"Gelman-Rubin statistic for parameter {labels[i]}: {c}")
 
     # plot traces of mass for convergence
     def mass_scatter():
@@ -126,6 +156,12 @@ def main():
         plt.tight_layout()
         plt.savefig(os.path.join(outdir, "m1_m2_scatter.png"), dpi = 300)
     
+    #plot a sample chain for each parameter to visually confirm convergence
+    def parameter_chains():
+        fig, axs = plt.subplots(nrows = 2, ncols = 3, figsize = (8.6))
+        axs[0,0].plot(
+
+    #plot time series strain data from detector (no whitening/filtering)
     def time_series():
         times, strain = markov.load_strain_text(strain_path, fs)
         plt.figure(figsize=(8,6))
@@ -135,10 +171,10 @@ def main():
         plt.tight_layout()
         plt.savefig(os.path.join(outdir, "time_series_GW150914.png"), dpi = 300)
 
+    #plot corner plot of parameters
     def corner_plot():
         fig = corner.corner(all_samples, labels = labels, show_titles = True)
         plt.savefig(os.path.join(outdir, "posterior_corner.png"), dpi = 300)
-    #print("Saved outputs in", outdir)
 
     if args.plot == "corner":
         corner_plot()
