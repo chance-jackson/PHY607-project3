@@ -12,8 +12,9 @@ from scipy.interpolate import interp1d
 import glob
 from importlib.resources import files
 
+
 data_path = files('data').joinpath('L-L1_GWOSC_16KHZ_R1-1126259447-32.txt')
-print(data_path)
+print("Getting data file from: ",data_path)
 
 # output dir
 outdir = "mcmc_out"

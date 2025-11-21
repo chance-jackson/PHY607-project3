@@ -25,7 +25,6 @@ import emcee
 outdir = "mcmc_out"
 os.makedirs(outdir, exist_ok=True)
 
-
 # main loop
 def main():
     parser = argparse.ArgumentParser(
@@ -274,6 +273,9 @@ def main():
         mass_post()
     elif args.plot == "chirp":
         fitting()
+    
+    return 0
 
+if __name__ == '__main__':
+    main()
 
-main()
