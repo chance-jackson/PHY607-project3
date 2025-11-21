@@ -29,7 +29,7 @@ event_rel_time = event_gps - file_start_gps
 
 # MCMC settings
 nwalkers = 4
-nsteps = 8000
+nsteps = 1000
 proposal_mode = "mix"       # "rw", "newton", or "mix"
 # proposal stds for [m1, m2, dL, tc, phi]
 rw_scales = np.array([3.0, 3.0, 150.0, 0.002, 1.0])
