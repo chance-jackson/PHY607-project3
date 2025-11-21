@@ -10,6 +10,10 @@ from pycbc.types import FrequencySeries
 from math import pi
 from scipy.interpolate import interp1d
 import glob
+from importlib.resources import files
+
+data_path = files('data').joinpath('L-L1_GWOSC_16KHZ_R1-1126259447-32.txt')
+print(data_path)
 
 # output dir
 outdir = "mcmc_out"
@@ -17,7 +21,7 @@ os.makedirs(outdir, exist_ok=True)
 
 # modeling GW150914
 ## import livingston data
-strain_path = glob.glob(L*.txt) #"L-L1_GWOSC_16KHZ_R1-1126259447-32.txt"
+strain_path = data_path
 
 fs = 16384.0 # sampling rate (Hz) of the strain file
 f_low = 20.0 # low-frequency cutoff for analysis (Hz)

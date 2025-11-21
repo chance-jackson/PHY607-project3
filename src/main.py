@@ -262,26 +262,18 @@ def main():
 
     if args.plot == "corner":
         corner_plot()
-        break
     elif args.plot == "full_signal":
         time_series()
-        break
     elif args.plot == "chains":
         parameter_chains()
-        break
     elif args.plot == "emcee":
         emcee_plot()
-        break
     elif args.plot == "mass_scatter":
         mass_scatter()
-        break
     elif args.plot == "traces":
         mass_post()
-        break
     elif args.plot == "chirp":
         fitting()
-        break
-    return
 
 
 main()

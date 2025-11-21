@@ -1,4 +1,6 @@
 __init__
+data
 main
 markov
+mcmc_out
 optimize

@@ -16,12 +16,18 @@ authors = [
 
 description = "A package containing methods to replicate the parameter estimation of GW150914 via Bayesian inference. "
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.10"
 classifiers = [
 	"Programming Language :: Python :: 3",
 	"License :: OSI Approved :: MIT License",
 	"Operating System :: OS Independent"
 ]
+
+[tools.setuptools.packages.find]
+where = ["src"]
+
+[tools.setuptools.package-data]
+data = ["*.txt"]
 
 [project.scripts]
 main-script = "main:main"

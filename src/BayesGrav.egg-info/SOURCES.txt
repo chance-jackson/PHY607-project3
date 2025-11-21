@@ -1,3 +1,4 @@
+MANIFEST.in
 pyproject.toml
 src/__init__.py
 src/main.py
@@ -9,3 +10,5 @@ src/BayesGrav.egg-info/dependency_links.txt
 src/BayesGrav.egg-info/entry_points.txt
 src/BayesGrav.egg-info/requires.txt
 src/BayesGrav.egg-info/top_level.txt
+src/data/L-L1_GWOSC_16KHZ_R1-1126259447-32.txt
+src/data/__init__.py
