@@ -25,7 +25,8 @@ def main():
             "full_signal",
             "chirp",
             "corner",
-            "emcee"
+            "emcee",
+            "chains"
         ],
         required=True,
         help=(
@@ -35,15 +36,16 @@ def main():
             "'full_signal' for the original time domain LIGO waveform, "
             "'chirp' for the LIGO waveform processed to just the chirp, "
             "'corner' for corner plot of parameter posteriors, "
-            "'emcee' for side-by-side of chains produced by emcee and homebrew markov "
+            "'emcee' for side-by-side of chains produced by emcee and homebrew markov, "
+            "'chains' for sample parameter chains showing convergence "
         ),
     )
     parser.add_argument(
             "--nwalkers",
             type = int,
-            default = 4,
+            default = 10,
             help=(
-                "Number of walkers to use in ensemble sampling (defaults to 4)"
+                "Number of walkers to use in ensemble sampling (defaults to 10). Expects integer argument."
                 )
             )
     parser.add_argument(
@@ -51,7 +53,7 @@ def main():
             type = int,
             default = 1000,
             help=(
-                "Number of iterations for Markov chains (defaults to 1000)"
+                "Number of iterations for Markov chains (defaults to 1000). Expects integer argument."
                 )
             )
     parser.add_argument(
@@ -66,21 +68,37 @@ def main():
                 "Proposal mode to use for Markov chain (defaults to mix)"
                 )
         )
-    # loop from external library (emcee)
-    #init = np.array([[35.0],
-    #                 [30.0],
-    #                 [400.0],
-    #                 [center_time],
-    #                 [0.0]]) #initialization, just GW150914 params
-    #sampler = emcee.EnsembleSampler(nwalkers = nwalkers, ndim = init.shape[0], log_prob_fn = markov.log_posterior)
-    #sampler.run_mcmc(init, nsteps)
-    #chains = sampler.get_chain()
-    
+
     args = parser.parse_args()
 
     nwalkers = args.nwalkers
     nsteps = args.nsteps
     proposal_mode = args.proposal_mode
+
+    # loop from external library (emcee)
+    walker_starts = []
+    for i in range(nwalkers):
+        base_init = np.array([[35.0,
+                        30.0,
+                        400.0,
+                        center_time,
+                        0.0]])
+        jitter = np.array([
+                0.05 * 30 * np.random.randn(),
+                0.05 * 35 * np.random.randn(),
+                50.0 * np.random.randn(),
+                0.0005 * np.random.randn(),
+                0.5 * np.random.randn()
+            ])
+        init = base_init + jitter
+        walker_starts.append(init)      #initialization, just GW150914 params plus some jitter
+    stacked_walker_starts = np.vstack(np.asarray(walker_starts))
+
+    sampler = emcee.EnsembleSampler(nwalkers = nwalkers, ndim = 5, log_prob_fn = markov.log_posterior)
+    sampler.run_mcmc(stacked_walker_starts, nsteps)
+    emcee_chains = sampler.get_chain()
+    print(emcee_chains)
+    print(emcee_chains[0])
 
     # main loop from markov.py
     chains, logs, accepts = markov.run_ensemble(nwalkers=nwalkers, nsteps=nsteps,
@@ -128,9 +146,12 @@ def main():
 
         return gelman_stats
 
-    gelman = gelman_rubin(chains)
+    emcee_chain_list = [emcee_chains[0:,i,0:] for i in range(nwalkers)] #contorting emcee to my will
+    gelman = gelman_rubin(chains) #compute gelman for our chains
+    gelman_emcee = gelman_rubin(emcee_chain_list) #compute gelman for emcee chains
     for i,c in enumerate(gelman):
         print(f"Gelman-Rubin statistic for parameter {labels[i]}: {c}")
+        print(f"Emcee computed GR statistic {labels[i]}: {c}")
 
     # plot traces of mass for convergence
     def mass_scatter():
@@ -158,9 +179,21 @@ def main():
     
     #plot a sample chain for each parameter to visually confirm convergence
     def parameter_chains():
-        fig, axs = plt.subplots(nrows = 2, ncols = 3, figsize = (8.6))
-        axs[0,0].plot(
-
+        fig, axs = plt.subplots(ncols = 3, nrows = 2, figsize = (8,6), layout = 'tight')
+        i,j = 0,0
+        for k in range(5):
+            if i % 2 == 0 and i > 0:
+                i = 0
+                j += 1
+            axs[i,j].plot(chains[0][:,k])
+            axs[i,j].set_ylabel(labels[k],fontsize=14)
+            axs[i,j].grid(alpha=0.5)
+            i += 1
+            k += 1
+        fig.suptitle("Sample Parameter Chains", fontsize=14)
+        fig.delaxes(axs[1][2]) #get rid of unused axis
+        plt.savefig(os.path.join(outdir, "parameter_chains.png"), dpi = 300)
+        
     #plot time series strain data from detector (no whitening/filtering)
     def time_series():
         times, strain = markov.load_strain_text(strain_path, fs)
@@ -173,11 +206,13 @@ def main():
 
     #plot corner plot of parameters
     def corner_plot():
-        fig = corner.corner(all_samples, labels = labels, show_titles = True)
+        fig = corner.corner(all_samples, labels = labels, show_titles = True, quantiles = [0.16,0.5,0.84])
         plt.savefig(os.path.join(outdir, "posterior_corner.png"), dpi = 300)
 
     if args.plot == "corner":
         corner_plot()
     if args.plot == "full_signal":
         time_series()
+    if args.plot =="chains":
+        parameter_chains()
 main()
