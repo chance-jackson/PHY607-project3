@@ -160,14 +160,52 @@ def main():
 
         return gelman_stats
 
+    def direct_autocorr(chain, max_lag=None):
+        """ This directly calculates the autocorrelation time / length
+        using numpy functions. Note there are some heuristic steps.
+        """
+        # We'll assume that the first half of the chain is "burn-in"
+        chain = chain[len(chain)//2:]
+    
+        n = len(chain)
+        if max_lag is None:
+            max_lag = n // 10 # practical limit for estimation
+
+
+        # Calculate the autocorrelation of the chain's single parameter value
+        # as function of lag/shift/offset in the number of samples
+        y = chain - np.mean(chain)
+        c = np.correlate(y, y, mode='full')
+        c = c[n-1 : n-1+max_lag]
+        rho = c / c[0]
+
+        # To get the correlation time, we integrate over the autocorrelation
+        # function.
+        negative_indices = np.where(rho < 0)[0]
+        if len(negative_indices) > 0:
+            cutoff = negative_indices[0]
+        else:
+            cutoff = len(rho)
+
+        tau_estimate = 1.0 + 2.0 * np.sum(rho[1:cutoff])
+        return tau_estimate, rho
+
     # compute gelman-rubin for our chains
     gelman = gelman_rubin(chains)
     # tau_estimate = estimate_autocorr(chains)
     chains_reshape = np.array(chains).reshape(nsteps, nwalkers, 5)
     tau_estimate_emcee = emcee.autocorr.integrated_time(chains_reshape, quiet=True)
+
+    tau_estimate_hand = np.zeros(5)
+    rand_chain_idx = np.random.randint(0,nwalkers)
+    for i in range(5):
+        tau_estimate_param, _ = direct_autocorr(chains[rand_chain_idx][:,i]) #correlation of ith parameter
+        tau_estimate_hand[i] += tau_estimate_param
+
     for i, c in enumerate(gelman):
         print(f"Gelman-Rubin statistic for parameter {labels[i]}: {c}")
         print(f"Emcee estimated tau {labels[i]}: {tau_estimate_emcee[i]}")
+        print(f"Estimated tau {labels[i]}: {tau_estimate_hand[i]}")
 
     if args.plot == "emcee":  # if user wants to use emcee
 
