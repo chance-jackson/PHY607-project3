@@ -48,7 +48,6 @@ def main():
             "'mass_scatter' for different walkers finding the values of m1 and m2, "
             "'traces' for walkers converging to a final mass value, "
             "'full_signal' for the original time domain LIGO waveform, "
-            "'chirp' for the LIGO waveform processed to just the chirp, "
             "'corner' for corner plot of parameter posteriors, "
             "'emcee' for sample chains from both homebrew markov and emcee library, "
             "'chains' for sample parameter chains showing convergence "
@@ -251,20 +250,20 @@ def main():
         fig.delaxes(axs[1][2])  # get rid of unused axis
         plt.savefig(os.path.join(outdir, "emcee_chains.png"), dpi=300)
 
-    def fitting():
-        times, strain = markov.load_strain_text(strain_path, fs)
-        idx = np.random.randint(len(all_samples), size=5)
+   # def fitting():
+   #     times, strain = markov.load_strain_text(strain_path, fs)
+   #     idx = np.random.randint(len(all_samples), size=5)
         # for i in idx:
         #  param = all_samples[i] #pull a random set of parameters from our samples
         #  hp, sample_times = make_waveform_td(*param)
         #  hp_whiten = whiten_bp(hp, psd_interp_whitening)
         #  print(hp)
         #  plt.plot(sample_times, hp_whiten)
-        data_whiten = whiten_bp(strain, psd_interp_whitening)
-        mask = (times >= start_time) & (times < end_time)
-        plt.plot(times - event_rel_time, data_whiten)
-        plt.xlim([-1.5, -0.75])
-        plt.savefig(os.path.join(outdir, "fitting.png"), dpi=300)
+   #     data_whiten = whiten_bp(strain, psd_interp_whitening)
+   #     mask = (times >= start_time) & (times < end_time)
+   #     plt.plot(times - event_rel_time, data_whiten)
+   #     plt.xlim([-1.5, -0.75])
+   #     plt.savefig(os.path.join(outdir, "fitting.png"), dpi=300)
 
     # plot time series strain data from detector (no whitening/filtering)
     def time_series():
@@ -279,7 +278,7 @@ def main():
     # plot corner plot of parameters
     def corner_plot():
         fig = corner.corner(
-            all_samples, labels=labels, show_titles=True, quantiles=[0.16, 0.5, 0.84]
+            all_samples, labels=labels, show_titles=True, quantiles=[0.025, 0.5, 0.975]
         )
         plt.savefig(os.path.join(outdir, "posterior_corner.png"), dpi=300)
 
@@ -290,14 +289,11 @@ def main():
     elif args.plot == "chains":
         parameter_chains()
     elif args.plot == "emcee":
-        print("making emcee plot")
         emcee_plot()
     elif args.plot == "mass_scatter":
         mass_scatter()
     elif args.plot == "traces":
         mass_post()
-    elif args.plot == "chirp":
-        fitting()
 
 
 if __name__ == "__main__":
