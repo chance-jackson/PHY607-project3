@@ -25,6 +25,7 @@ import emcee
 outdir = "mcmc_out"
 os.makedirs(outdir, exist_ok=True)
 
+
 # main loop
 def main():
     parser = argparse.ArgumentParser(
@@ -49,8 +50,8 @@ def main():
             "'full_signal' for the original time domain LIGO waveform, "
             "'chirp' for the LIGO waveform processed to just the chirp, "
             "'corner' for corner plot of parameter posteriors, "
-            "'emcee' for side-by-side of chains produced by emcee and homebrew markov, "
-            "'chains' for sample parameter chains showing convergence, also includes chains produced from emcee library "
+            "'emcee' for sample chains from both homebrew markov and emcee library, "
+            "'chains' for sample parameter chains showing convergence "
         ),
     )
     parser.add_argument(
@@ -82,30 +83,32 @@ def main():
     nsteps = args.nsteps
     proposal_mode = args.proposal_mode
 
-    # loop from external library (emcee)
-    walker_starts = []
-    for i in range(nwalkers):
-        base_init = np.array([[35.0, 30.0, 400.0, center_time, 0.0]])
-        jitter = np.array(
-            [
-                0.05 * 30 * np.random.randn(),
-                0.05 * 35 * np.random.randn(),
-                50.0 * np.random.randn(),
-                0.0005 * np.random.randn(),
-                0.5 * np.random.randn(),
-            ]
-        )
-        init = base_init + jitter
-        walker_starts.append(
-            init
-        )  # initialization, just GW150914 params plus some jitter
-    stacked_walker_starts = np.vstack(np.asarray(walker_starts))
+    # loop from external library (emcee), only runs if plot args == emcee
 
-    sampler = emcee.EnsembleSampler(
-        nwalkers=nwalkers, ndim=5, log_prob_fn=markov.log_posterior
-    )
-    sampler.run_mcmc(stacked_walker_starts, nsteps)
-    emcee_chains = sampler.get_chain()
+    if args.plot == "emcee":
+        walker_starts = []
+        for i in range(nwalkers):
+            base_init = np.array([[35.0, 30.0, 400.0, center_time, 0.0]])
+            jitter = np.array(
+                [
+                    0.05 * 30 * np.random.randn(),
+                    0.05 * 35 * np.random.randn(),
+                    50.0 * np.random.randn(),
+                    0.0005 * np.random.randn(),
+                    0.5 * np.random.randn(),
+                ]
+            )
+            init = base_init + jitter
+            walker_starts.append(
+                init
+            )  # initialization, just GW150914 params plus some jitter so that emcee doesn't get mad
+        stacked_walker_starts = np.vstack(np.asarray(walker_starts))
+
+        sampler = emcee.EnsembleSampler(
+            nwalkers=nwalkers, ndim=5, log_prob_fn=markov.log_posterior
+        )
+        sampler.run_mcmc(stacked_walker_starts, nsteps)
+        emcee_chains = sampler.get_chain()
 
     # main loop from markov.py
     chains, logs, accepts = markov.run_ensemble(
@@ -117,8 +120,8 @@ def main():
     )
     print("Acceptance rates:", accepts)
 
-    # removes first 30% of samples
-    burnin = int(0.3 * nsteps)
+    # removes first 50% of samples
+    burnin = int(0.5 * nsteps)
     all_samples = np.vstack([chains[i][burnin:] for i in range(len(chains))])
     np.save(os.path.join(outdir, "posterior_samples.npy"), all_samples)
     print("Collected samples:", all_samples.shape)
@@ -133,23 +136,22 @@ def main():
 
     chains_burnin = [chains[i][burnin:] for i in range(len(chains))]
 
-    def gelman_rubin(chains, Ndims=5):
+    def gelman_rubin(chain_list, Ndims=5):
         """
         This computes the Gelman-Rubin statistic for an ensemble of Markov chains by comparing the variance within a chain to the variance between chains. Note: this is done after burn-in values have been discarded.
         """
-        chains_burnin = [
-            chains[i][burnin:] for i in range(len(chains))
-        ]  # chains (discarding burn-in)
-        L = chains_burnin[0].shape[0]  # length of each chain
+        chain_burnin = [
+            chain_list[i][burnin:] for i in range(len(chain_list))
+        ]  # chains (discarding burn-in
         gelman_stats = np.zeros(Ndims)  # array to store gelman stats
-
+        L = len(chain_burnin[0])
         chain_means, chain_var = [], []
         for i in range(Ndims):
-            for j in range(len(chains)):
+            for j in range(len(chain_list)):
                 chain_means.append(
-                    np.mean(chains[j][:, i])
+                    np.mean(chain_list[j][:, i])
                 )  # take within chain mean of chain j, ith parameter
-                chain_var.append(np.var(chains[j][:, i]))  # within chain variance
+                chain_var.append(np.var(chain_list[j][:, i]))  # within chain variance
             mean_chain_mean = np.mean(chain_means)  # mean of chain means
             B = np.var(chain_means)  # variance of chain means
             W = np.mean(chain_var)  # mean of individual chain variances
@@ -159,14 +161,31 @@ def main():
 
         return gelman_stats
 
-    emcee_chain_list = [
-        emcee_chains[0:, i, 0:] for i in range(nwalkers)
-    ]  # contorting emcee to my will
-    gelman = gelman_rubin(chains)  # compute gelman for our chains
-    gelman_emcee = gelman_rubin(emcee_chain_list)  # compute gelman for emcee chains
+    # compute gelman-rubin for our chains
+    gelman = gelman_rubin(chains)
+    # tau_estimate = estimate_autocorr(chains)
+    chains_reshape = np.array(chains).reshape(nsteps, nwalkers, 5)
+    tau_estimate_emcee = emcee.autocorr.integrated_time(chains_reshape, quiet=True)
     for i, c in enumerate(gelman):
         print(f"Gelman-Rubin statistic for parameter {labels[i]}: {c}")
-        print(f"GR statistic for emcee chains {labels[i]}: {c}")
+        print(f"Emcee estimated tau {labels[i]}: {tau_estimate_emcee[i]}")
+
+    if args.plot == "emcee":  # if user wants to use emcee
+
+        emcee_chain_list = [
+            emcee_chains[0:, i, 0:] for i in range(nwalkers)
+        ]  # contorting emcee to my will
+        gelman_emcee = gelman_rubin(emcee_chain_list)  # compute gelman for emcee chains
+        tau_estimate_emcee_chains = emcee.autocorr.integrated_time(
+            emcee_chains, quiet=True
+        )
+        for i in range(len(gelman_emcee)):
+            print(
+                f"Gelman-Rubin statistic for emcee chains {labels[i]}: {gelman_emcee[i]}"
+            )
+            print(
+                f"Tau estimate for emcee chains {labels[i]}: {tau_estimate_emcee_chains[i]}"
+            )
 
     # plot traces of mass for convergence
     def mass_scatter():
@@ -192,38 +211,43 @@ def main():
         plt.tight_layout()
         plt.savefig(os.path.join(outdir, "m1_m2_scatter.png"), dpi=300)
 
-    # plot a sample chain for each parameter to visually confirm convergence
+    # plot a sample chain for each parameter to visually confirm convergence, not including emcee chains
     def parameter_chains():
+        rand_idx = np.random.randint(0,nwalkers)
         fig, axs = plt.subplots(ncols=3, nrows=2, figsize=(8, 6), layout="tight")
         i, j = 0, 0
         for k in range(5):
             if i % 2 == 0 and i > 0:
                 i = 0
                 j += 1
-            axs[i, j].plot(chains[0][:, k], label="hand written")
+            axs[i, j].plot(chains[rand_idx][:, k], label="hand written")
             axs[i, j].set_ylabel(labels[k], fontsize=14)
             axs[i, j].grid(alpha=0.5)
             i += 1
             k += 1
         fig.suptitle("Sample Parameter Chains", fontsize=14)
+        fig.supxlabel(r"$N_{steps}$", fontsize = 14)
         fig.delaxes(axs[1][2])  # get rid of unused axis
         plt.savefig(os.path.join(outdir, "parameter_chains.png"), dpi=300)
 
+    # plot sample chains for each parameter, including those found by emcee
     def emcee_plot():
+        rand_idx = np.random.randint(0,nwalkers)
         fig, axs = plt.subplots(ncols=3, nrows=2, figsize=(8, 6), layout="tight")
         i, j = 0, 0
         for k in range(5):
             if i % 2 == 0 and i > 0:
                 i = 0
                 j += 1
-            axs[i, j].plot(chains[0][:, k], label="hand written")
-            axs[i, j].plot(emcee_chain_list[0][:, k], label="emcee")
+            axs[i, j].plot(chains[rand_idx][:, k], label="hand written")
+            axs[i, j].plot(emcee_chain_list[rand_idx][:, k], label="emcee")
             axs[i, j].set_ylabel(labels[k], fontsize=14)
             axs[i, j].grid(alpha=0.5)
             i += 1
             k += 1
         axs[0, 0].legend(fontsize=8)
         fig.suptitle("Sample Parameter Chains", fontsize=14)
+        fig.supxlabel(r"$N_{steps}$", fontsize = 14)
         fig.delaxes(axs[1][2])  # get rid of unused axis
         plt.savefig(os.path.join(outdir, "emcee_chains.png"), dpi=300)
 
@@ -266,6 +290,7 @@ def main():
     elif args.plot == "chains":
         parameter_chains()
     elif args.plot == "emcee":
+        print("making emcee plot")
         emcee_plot()
     elif args.plot == "mass_scatter":
         mass_scatter()
@@ -273,9 +298,7 @@ def main():
         mass_post()
     elif args.plot == "chirp":
         fitting()
-    
-    return 0
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
-
