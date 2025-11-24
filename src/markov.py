@@ -2,7 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from numpy.linalg import inv, LinAlgError
-import optimize          # your optimize.py, we end up needing to use multiple optimizers due to inaccuracies but we can discuss in report
+import optimize          
 from scipy.signal import welch, butter, filtfilt
 from pycbc.waveform import get_fd_waveform, get_td_waveform
 from pycbc.psd import inverse_spectrum_truncation
